@@ -1,14 +1,18 @@
 import pathlib
 import pickle
+from typing import List
 import pandas as pd
 import numpy as np
 import scipy
 import sklearn
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.metrics import mean_squared_error
+from prefect.artifacts import create_markdown_artifact
 import mlflow
 import xgboost as xgb
 from prefect import flow, task
+from datetime import date
+from prefect_email import EmailServerCredentials, email_send_message
 
 
 @task(retries=3, retry_delay_seconds=2)
@@ -106,13 +110,43 @@ def train_best_model(
         mlflow.log_artifact("models/preprocessor.b", artifact_path="preprocessor")
 
         mlflow.xgboost.log_model(booster, artifact_path="models_mlflow")
+
+
+        markdown__rmse_report = f"""# RMSE Report
+
+        ## Summary
+
+        Duration Prediction 
+
+        ## RMSE XGBoost Model
+
+        | Region    | RMSE |
+        |:----------|-------:|
+        | {date.today()} | {rmse:.2f} |
+        """
+
+        create_markdown_artifact(
+            key="duration-model-report", markdown=markdown__rmse_report
+        )
     return None
+
+@flow
+def sample_email_send_message(email_addresses: List[str]):
+    email_server_credentials = EmailServerCredentials.load("NEW-DEPLOYMENT")
+    for email_address in email_addresses:
+        subject = email_send_message.with_options(name=f"email{email_address}").submit(
+            email_server_credentials=email_server_credentials,
+            subject="Example Task Notification using gmail",
+            msg="This is to prove email works with python code!!!",
+            email_to=email_address,
+        )
+
 
 
 @flow
 def main_flow(
-    train_path: str = "/home/ubuntu/mlops-zoomcamp/03-orchestration/3.2/mlops/prefect-mlops-zoomcamp/data/green_tripdata_2023-01.parquet",
-    val_path: str = "/home/ubuntu/mlops-zoomcamp/03-orchestration/3.2/mlops/prefect-mlops-zoomcamp/old_data/green_tripdata_2023-02.parquet",
+    train_path: str = "/home/ubuntu/mlops-zoomcamp/03-orchestration/3.2/mlops/prefect-mlops-zoomcamp/data/green_tripdata_2023-02.parquet",
+    val_path: str = "/home/ubuntu/mlops-zoomcamp/03-orchestration/3.2/mlops/prefect-mlops-zoomcamp/data/green_tripdata_2023-03.parquet",
 ) -> None:
     """The main training pipeline"""
 
@@ -129,6 +163,8 @@ def main_flow(
 
     # Train
     train_best_model(X_train, X_val, y_train, y_val, dv)
+    email_msgs = sample_email_send_message("kayalade007@gmail.com")
+    print(f"A new msg have been recieved for your recent pipeline: {email_msgs}")
 
 
 if __name__ == "__main__":
